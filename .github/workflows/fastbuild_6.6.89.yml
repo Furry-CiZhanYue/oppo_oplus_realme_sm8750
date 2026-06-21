@@ -252,21 +252,13 @@ jobs:
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在配置SukiSU Ultra"
             curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@CiZhanYue"' >> ./common/arch/arm64/configs/gki_defconfig
             cd ./KernelSU
-            
-            # ★★★ 从 Kbuild 读取官方 DKSU_VERSION（如 40813）★★★
-            KSU_VERSION=$(grep -E 'DKSU_VERSION\s*[:?]?=\s*[0-9]+' kernel/Kbuild | grep -o '[0-9]\+' | head -1)
-            if [ -z "$KSU_VERSION" ]; then
-              # 如果读不到，回退到提交计数
-              KSU_VERSION=$(expr $(git rev-list --count main) + 30700 2>/dev/null || echo 114514)
-            fi
+            # 生成自定义版本号（基于提交计数）, 失败时使用 114514
+            KSU_VERSION=$(expr $(git rev-list --count main) + 30700 2>/dev/null || echo 114514)
+            # 存储版本号到 GitHub 环境变量
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
             echo "ksuver=$KSU_VERSION" >> $GITHUB_OUTPUT
-            
-            # ★★★ 强制替换 @mian 为 @CiZhanYue ★★★
-            find ./ -type f \( -name "Kbuild" -o -name "Makefile" \) -exec sed -i 's/@mian/@CiZhanYue/g' {} \;
-            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@CiZhanYue"' >> ../common/arch/arm64/configs/gki_defconfig
-            
           elif [[ ${{ github.event.inputs.ksu_type }} == "ksunext" ]]; then
             echo "正在配置KernelSU Next..."
             curl -LSs "https://raw.githubusercontent.com/pershoot/KernelSU-Next/refs/heads/dev-susfs/kernel/setup.sh" | bash -s dev-susfs
@@ -299,51 +291,24 @@ jobs:
         run: |
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} != "none" ]]; then
-            echo "正在添加 SUSFS 支持..."
-            
-            # ★★★ 直接从官方仓库克隆 SUSFS 源码 ★★★
-            echo "正在克隆 simonpunk/susfs4ksu 仓库 (gki-android15-6.6 分支)..."
-            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android15-6.6 susfs_src || \
-              echo "GitLab 克隆失败，尝试 GitHub 镜像..."
-            if [ ! -d "susfs_src/fs/susfs" ]; then
-              git clone --depth=1 https://github.com/simonpunk/susfs4ksu.git -b gki-android15-6.6 susfs_src || \
-                echo "GitHub 克隆也失败，请检查网络"
-            fi
-            
-            # 复制 SUSFS 核心源码到内核目录
-            if [ -d "susfs_src/fs/susfs" ]; then
-              cp -r susfs_src/fs/susfs ./common/fs/
-              cp -r susfs_src/include/linux/susfs*.h ./common/include/linux/ 2>/dev/null || true
-              echo "✅ SUSFS 源码复制完成"
-            else
-              echo "❌ 无法获取 SUSFS 源码，退出"
-              exit 1
-            fi
-            
-            # 尝试打 hide_stuff 补丁（可选，允许失败）
-            wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/69_hide_stuff.patch -O ./common/69_hide_stuff.patch || true
+            echo "正在添加susfs补丁..."
+            git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/69_hide_stuff.patch -O ./common/69_hide_stuff.patch
+            cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+            cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+            cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
             cd ./common
-            if [ -f "69_hide_stuff.patch" ]; then
-              patch -p1 -N -F 3 < 69_hide_stuff.patch || echo "⚠️ hide_stuff 补丁失败（不影响 SUSFS 功能）"
-            fi
-            
-            # ★★★ 强制注入 Kconfig 和 Makefile 编译链接 ★★★
-            if ! grep -q "source \"fs/susfs/Kconfig\"" fs/Kconfig; then
-              sed -i '/^endmenu/i source "fs/susfs/Kconfig"' fs/Kconfig
-              echo "✅ 已注入 SUSFS Kconfig 引用"
-            fi
-            if ! grep -q "obj-\$(CONFIG_KSU_SUSFS) += susfs/" fs/Makefile; then
-              echo "obj-\$(CONFIG_KSU_SUSFS) += susfs/" >> fs/Makefile
-              echo "✅ 已注入 SUSFS Makefile 编译项"
-            fi
+            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+            patch -p1 -N -F 3 < 69_hide_stuff.patch || true
             cd ..
           else
-            echo "已选择无内置 KernelSU 模式，跳过 SUSFS 配置..."
+            echo "已选择无内置KernelSU模式，跳过susfs配置..."
           fi
           if [[ ${{ github.event.inputs.ksu_type }} == "ksu" ]]; then
             echo "正在为原版 KernelSU (tiann/KernelSU)添加补丁..."
-            # 对于原版 KSU，可能不需要额外补丁，保留空逻辑
-            echo "✅ 原版 KernelSU 已就绪"
+            cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
+            cd ./KernelSU
+            patch -p1 < 10_enable_susfs_for_ksu.patch || true
           fi
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
@@ -417,8 +382,6 @@ jobs:
           sed -i 's/check_defconfig//' ./common/build.config.gki
           #跳过将uapi标准头安装到 usr/include 目录的不必要操作，节省编译时间
           echo "CONFIG_HEADERS_INSTALL=n" >> ./common/arch/arm64/configs/gki_defconfig
-          # ★★★ 最后强制覆盖一次 SUSFS 配置（防止被 make gki_defconfig 重置）★★★
-          echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
           
       - name: 启用网络功能增强优化配置
         if: inputs.better_net
