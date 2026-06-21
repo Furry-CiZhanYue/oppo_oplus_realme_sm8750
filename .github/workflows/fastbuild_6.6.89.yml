@@ -301,42 +301,90 @@ jobs:
         run: |
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} != "none" ]]; then
-            echo "正在添加 susfs 补丁..."
-            git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-            wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/69_hide_stuff.patch -O ./common/69_hide_stuff.patch
+            echo "正在添加 SUSFS 支持..."
             
-            cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
-            cp -r ./susfs4ksu/kernel_patches/fs/* ./common/fs/
-            cp -r ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+            # 方案一：尝试使用 susfs4oki 补丁（可能失败，但不强求）
+            git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }} || echo "susfs4oki 克隆失败，尝试备用方案"
+            
+            # 尝试从 susfs4ksu 复制补丁和源码（如果存在）
+            if [ -d "susfs4ksu" ]; then
+              # 如果仓库里有 fs/susfs 目录，直接复制
+              if [ -d "susfs4ksu/fs/susfs" ]; then
+                cp -r susfs4ksu/fs/susfs ./common/fs/
+                echo "✅ 从 susfs4ksu 复制了 fs/susfs 源码目录"
+              fi
+              
+              # 复制补丁文件（用于尝试打补丁）
+              if [ -f "susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch" ]; then
+                cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+              fi
+              
+              # 复制头文件
+              if [ -d "susfs4ksu/kernel_patches/include/linux" ]; then
+                cp -r susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/ 2>/dev/null || true
+              fi
+            fi
+            
+            # 下载 hide_stuff 补丁
+            wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/other_patch/69_hide_stuff.patch -O ./common/69_hide_stuff.patch || true
+            
             cd ./common
             
-            # 尝试打补丁（允许失败，但会输出警告）
-            patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || echo "⚠️ 主补丁失败，将强制注入编译依赖"
-            patch -p1 -N -F 3 < 69_hide_stuff.patch || echo "⚠️ hide_stuff 补丁失败"
+            # 尝试打补丁（允许失败）
+            if [ -f "50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch" ]; then
+              patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || echo "⚠️ 主补丁失败，将使用已复制的源码继续编译"
+            fi
+            if [ -f "69_hide_stuff.patch" ]; then
+              patch -p1 -N -F 3 < 69_hide_stuff.patch || echo "⚠️ hide_stuff 补丁失败"
+            fi
             
-            # ★★★ 强制注入 Kconfig 和 Makefile 引用（即使补丁完全失败也能编译）★★★
+            # ★★★ 核心修复：无论补丁是否成功，只要 fs/susfs 目录存在就强制注入编译链接 ★★★
             if [ -d "fs/susfs" ]; then
+              # 确保 fs/Kconfig 包含 source 语句
               if ! grep -q "source \"fs/susfs/Kconfig\"" fs/Kconfig; then
                 sed -i '/^endmenu/i source "fs/susfs/Kconfig"' fs/Kconfig
                 echo "✅ 已手动添加 susfs Kconfig 引用"
               fi
+              # 确保 fs/Makefile 包含编译项
               if ! grep -q "obj-\$(CONFIG_KSU_SUSFS) += susfs/" fs/Makefile; then
                 echo "obj-\$(CONFIG_KSU_SUSFS) += susfs/" >> fs/Makefile
                 echo "✅ 已手动添加 susfs Makefile 编译项"
               fi
             else
-              echo "❌ 错误：fs/susfs 目录不存在！请检查 susfs4oki 克隆是否成功。"
-              exit 1
+              # ★★★ 如果 fs/susfs 仍然不存在，尝试从备用源直接克隆 ★★★
+              echo "⚠️ fs/susfs 目录不存在，尝试从官方 SUSFS 仓库克隆..."
+              cd ..
+              rm -rf susfs_tmp
+              git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git susfs_tmp || git clone --depth=1 https://github.com/simonpunk/susfs4ksu.git susfs_tmp || echo "备用仓库克隆失败"
+              if [ -d "susfs_tmp/fs/susfs" ]; then
+                cp -r susfs_tmp/fs/susfs ./common/fs/
+                cp -r susfs_tmp/include/linux/* ./common/include/linux/ 2>/dev/null || true
+                echo "✅ 已从备用仓库复制 susfs 源码到 fs/susfs"
+                cd ./common
+                # 再次尝试注入 Kconfig 和 Makefile
+                if ! grep -q "source \"fs/susfs/Kconfig\"" fs/Kconfig; then
+                  sed -i '/^endmenu/i source "fs/susfs/Kconfig"' fs/Kconfig
+                fi
+                if ! grep -q "obj-\$(CONFIG_KSU_SUSFS) += susfs/" fs/Makefile; then
+                  echo "obj-\$(CONFIG_KSU_SUSFS) += susfs/" >> fs/Makefile
+                fi
+                echo "✅ SUSFS 源码已就绪"
+              else
+                echo "❌ 所有尝试均失败，无法获取 SUSFS 源码，请检查网络或仓库状态"
+                exit 1
+              fi
             fi
             cd ..
           else
-            echo "已选择无内置KernelSU模式，跳过susfs配置..."
+            echo "已选择无内置 KernelSU 模式，跳过 SUSFS 配置..."
           fi
           if [[ ${{ github.event.inputs.ksu_type }} == "ksu" ]]; then
             echo "正在为原版 KernelSU (tiann/KernelSU)添加补丁..."
-            cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
-            cd ./KernelSU
-            patch -p1 < 10_enable_susfs_for_ksu.patch || echo "⚠️ KernelSU 适配补丁失败"
+            if [ -f "susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
+              cp ./susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
+              cd ./KernelSU
+              patch -p1 < 10_enable_susfs_for_ksu.patch || echo "⚠️ KernelSU 适配补丁失败"
+            fi
           fi
           
       - name: 应用lz4 1.10.0 & zstd 1.5.7补丁
