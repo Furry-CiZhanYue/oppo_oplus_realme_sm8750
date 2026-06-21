@@ -305,7 +305,7 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} != "none" ]]; then
             echo "正在添加 susfs 补丁（susfs4oki）..."
-            git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone --depth=1 https://github.com/luyanci/susfs4oki/tree/oki-android15-6.6
             
             # 1. 复制所有需要的文件（fs、include、security 等）
             cp -r ./susfs4ksu/kernel_patches/fs/* ./common/fs/ 2>/dev/null || true
