@@ -285,6 +285,13 @@ jobs:
           else
             echo "已选择无内置KernelSU模式，跳过KernelSU配置..."
           fi
+          
+      - name: 修复SukiSU完整版本显示后缀
+        if: github.event.inputs.ksu_type == 'sukisu'
+        run: |
+          cd kernel_workspace/KernelSU
+          # 将默认的 @main 替换为 @CiZhanYue
+          sed -i 's/@main"/@CiZhanYue"/' kernel/Kconfig
 
       - name: 应用 KernelSU & SUSFS 补丁
         if: inputs.susfs_enable
