@@ -257,8 +257,6 @@ jobs:
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在配置SukiSU Ultra"
             curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
-            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@CiZhanYue"' >> ./common/arch/arm64/configs/gki_defconfig
-            cd ./KernelSU
             KSU_GIT_VERSION=$(git rev-list --count HEAD)
             KSU_VERSION=$((40000 + KSU_GIT_VERSION - 2815))
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
