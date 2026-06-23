@@ -256,7 +256,8 @@ jobs:
           cd kernel_workspace
           if [[ ${{ github.event.inputs.ksu_type }} == "sukisu" ]]; then
             echo "正在配置SukiSU Ultra"
-            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s dev
+            echo 'CONFIG_KSU_FULL_NAME_FORMAT="%TAG_NAME%-%COMMIT_SHA%@CiZhanYue"' >> ./common/arch/arm64/configs/gki_defconfig
             KSU_GIT_VERSION=$(git rev-list --count HEAD)
             KSU_VERSION=$((40000 + KSU_GIT_VERSION - 2815))
             echo "KSUVER=$KSU_VERSION" >> $GITHUB_ENV
@@ -289,12 +290,6 @@ jobs:
           else
             echo "已选择无内置KernelSU模式，跳过KernelSU配置..."
           fi
-          
-      - name: 修复SukiSU完整版本显示后缀
-        if: github.event.inputs.ksu_type == 'sukisu' || github.event.inputs.ksu_type == 'resukisu'
-        run: |
-          cd kernel_workspace/KernelSU
-          sed -i 's/@main"/@CiZhanYue"/' kernel/Kconfig
 
       - name: 应用 KernelSU & SUSFS 补丁
         if: inputs.susfs_enable
